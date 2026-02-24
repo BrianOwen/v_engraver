@@ -141,9 +141,17 @@
           <span>&deg;</span>
         </div>
 
-        <label>Max Depth:</label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="limitDepth"> Max Depth:
+        </label>
         <div class="input-with-unit">
-          <input type="number" id="maxDepth" value="0.25" min="0.01" max="2" step="0.01">
+          <input type="number" id="maxDepth" value="0.25" min="0.01" max="2" step="0.01" disabled>
+          <span data-unit-label="length">in</span>
+        </div>
+
+        <label id="stepoverLabel" class="hidden">Stepover:</label>
+        <div id="stepoverWrap" class="input-with-unit hidden">
+          <input type="number" id="stepover" value="0.05" min="0.005" max="1" step="0.005">
           <span data-unit-label="length">in</span>
         </div>
       </div>

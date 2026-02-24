@@ -5,7 +5,7 @@ import { importSVG } from './modules/svg-import.js';
 import { importDXF } from './modules/dxf-import.js';
 import { loadDefaultFont, loadFontByName, textToPolygons, isFontReady } from './modules/text-to-paths.js';
 import { computeMedialAxis } from './modules/medial-axis.js';
-import { generateVEngraveToolpath, calculateStats } from './modules/toolpath-gen.js';
+import { generateVEngraveToolpath, generatePocketPasses, calculateStats } from './modules/toolpath-gen.js';
 import { exportAsGcode, exportAsSbp } from './modules/export.js';
 import { CLIPART_CATALOG } from './modules/clipart.js';
 import { parseSVGString } from './modules/svg-import.js';
@@ -42,6 +42,7 @@ function setupEventListeners() {
         { id: 'materialHeight', type: 'length' },
         { id: 'materialThickness', type: 'length' },
         { id: 'maxDepth', type: 'length' },
+        { id: 'stepover', type: 'length' },
         { id: 'feedRate', type: 'rate' },
         { id: 'plungeRate', type: 'rate' },
         { id: 'safeZ', type: 'length' },
@@ -115,6 +116,14 @@ function setupEventListeners() {
     const isCustom = e.target.value === 'custom';
     document.getElementById('customAngleLabel').classList.toggle('hidden', !isCustom);
     document.getElementById('customAngleWrap').classList.toggle('hidden', !isCustom);
+  });
+
+  // Max depth checkbox toggle — also show/hide stepover
+  document.getElementById('limitDepth').addEventListener('change', (e) => {
+    const on = e.target.checked;
+    document.getElementById('maxDepth').disabled = !on;
+    document.getElementById('stepoverLabel').classList.toggle('hidden', !on);
+    document.getElementById('stepoverWrap').classList.toggle('hidden', !on);
   });
 
   // Text convert button
@@ -461,7 +470,10 @@ function readInputs() {
     : parseFloat(angleSelect.value);
 
   state.vBit.includedAngle = angle;
-  state.vBit.maxDepth = fromDisplay(parseFloat(document.getElementById('maxDepth').value));
+  const depthLimited = document.getElementById('limitDepth').checked;
+  state.vBit.maxDepth = depthLimited
+    ? fromDisplay(parseFloat(document.getElementById('maxDepth').value))
+    : Infinity;
   state.material.width = fromDisplay(parseFloat(document.getElementById('materialWidth').value));
   state.material.height = fromDisplay(parseFloat(document.getElementById('materialHeight').value));
   state.material.thickness = fromDisplay(parseFloat(document.getElementById('materialThickness').value));
@@ -483,8 +495,8 @@ async function doGenerate() {
 
   readInputs();
 
-  // Warn if max depth exceeds material thickness
-  if (state.vBit.maxDepth > state.material.thickness) {
+  // Warn if max depth exceeds material thickness (only when depth is limited)
+  if (isFinite(state.vBit.maxDepth) && state.vBit.maxDepth > state.material.thickness) {
     setStatus(`Warning: Max depth (${toDisplay(state.vBit.maxDepth).toFixed(3)} ${unitSuffix()}) exceeds material thickness (${toDisplay(state.material.thickness).toFixed(3)} ${unitSuffix()})! V-bit will cut through the material.`);
   }
 
@@ -516,7 +528,26 @@ async function doGenerate() {
     await new Promise(r => setTimeout(r, 20));
 
     // Step 2: Generate toolpath
-    state.moves = generateVEngraveToolpath(state.medialAxis, state.vBit, state.machine);
+    // When depth is limited: pocket raster first (roughing), then V-engrave (finish).
+    // The V-engrave pass uses the same inscribed-circle medial-axis approach with
+    // the radius capped at maxRadius — this naturally produces the correct wall
+    // profile around the pocket boundary.
+    if (isFinite(state.vBit.maxDepth)) {
+      setLoading(true, 'Generating pocket passes...');
+      await new Promise(r => setTimeout(r, 20));
+
+      const stepover = fromDisplay(parseFloat(document.getElementById('stepover').value)) || 0.05;
+      const pocketMoves = generatePocketPasses(state.polygons, state.vBit, state.machine, stepover);
+
+      setLoading(true, 'Generating V-engrave passes...');
+      await new Promise(r => setTimeout(r, 20));
+
+      const vEngraveMoves = generateVEngraveToolpath(state.medialAxis, state.vBit, state.machine);
+
+      state.moves = [...pocketMoves, ...vEngraveMoves];
+    } else {
+      state.moves = generateVEngraveToolpath(state.medialAxis, state.vBit, state.machine);
+    }
 
     // Step 3: Update preview — use material bounds for the surface
     const matB = materialBounds();
@@ -527,7 +558,9 @@ async function doGenerate() {
 
     // Step 4: Show stats
     const stats = calculateStats(state.moves, state.machine.feedRate);
-    const depthWarning = state.vBit.maxDepth > state.material.thickness
+    const actualMaxDepth = parseFloat(stats.maxDepth);
+    const exceedsMaterial = actualMaxDepth > toDisplay(state.material.thickness);
+    const depthWarning = exceedsMaterial
       ? ' <span style="color:#ff4444">⚠ EXCEEDS MATERIAL</span>'
       : '';
     const infoEl = document.getElementById('toolpathInfo');
@@ -545,8 +578,8 @@ async function doGenerate() {
     document.getElementById('exportSbp').disabled = false;
 
     const statusMsg = `Toolpath generated: ${stats.moveCount} moves, ${stats.cutLength} ${unitSuffix()} cut length`;
-    if (state.vBit.maxDepth > state.material.thickness) {
-      setStatus(`${statusMsg} — WARNING: Depth exceeds material thickness!`);
+    if (exceedsMaterial) {
+      setStatus(`${statusMsg} — WARNING: Max cut depth exceeds material thickness!`);
     } else {
       setStatus(statusMsg);
     }

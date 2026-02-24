@@ -331,6 +331,22 @@ button.primary:hover {
   align-items: center;
 }
 
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+input[type="number"]:disabled {
+  opacity: 0.4;
+}
+
 input[type="number"],
 select {
   width: 100%;

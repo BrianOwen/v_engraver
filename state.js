@@ -18,7 +18,7 @@ export const state = {
   // V-Bit configuration
   vBit: {
     includedAngle: 90,    // Full included angle in degrees
-    maxDepth: 0.25,       // Maximum plunge depth (inches)
+    maxDepth: Infinity,   // Maximum plunge depth (inches), Infinity = unlimited
   },
 
   // Machine settings

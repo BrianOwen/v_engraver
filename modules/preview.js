@@ -227,7 +227,17 @@ export function showCarvedSurface(medialAxis, vBit, bounds) {
 
   const halfAngle = (vBit.includedAngle / 2) * Math.PI / 180;
   const tanHA = Math.tan(halfAngle);
-  const maxRadius = vBit.maxDepth * tanHA;
+  let maxRadius = vBit.maxDepth * tanHA;
+
+  // If unlimited depth, derive maxRadius from actual medial axis data
+  if (!isFinite(maxRadius)) {
+    maxRadius = 0;
+    for (const branch of medialAxis.branches) {
+      for (const pt of branch) {
+        if (pt.radius > maxRadius) maxRadius = pt.radius;
+      }
+    }
+  }
 
   const x0 = bounds.minX;
   const y0 = bounds.minY;
