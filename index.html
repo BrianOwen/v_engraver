@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>V-Engraver - ShopBot Labs</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.164.0/examples/jsm/",
+        "d3-delaunay": "https://cdn.jsdelivr.net/npm/d3-delaunay@6/+esm"
+      }
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+</head>
+<body class="light-mode">
+
+  <!-- Left Sidebar -->
+  <div id="sidebar">
+    <div class="sidebar-header">
+      <h1>V-Engraver</h1>
+      <div class="header-controls">
+        <div class="unit-toggle" id="unitToggle">
+          <button class="unit-btn active" data-unit="in">in</button>
+          <button class="unit-btn" data-unit="mm">mm</button>
+        </div>
+        <button id="themeToggle" title="Toggle dark/light mode">
+          <span class="light-icon">&#9790;</span>
+          <span class="dark-icon">&#9788;</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Import Section -->
+    <section class="control-section">
+      <h2>Import</h2>
+      <div id="dropZone" class="drop-zone">
+        <p>Drag & drop SVG or DXF file</p>
+        <p class="drop-zone-or">or</p>
+        <label class="file-input-label">
+          Browse Files
+          <input type="file" id="fileInput" accept=".svg,.dxf,.SVG,.DXF" hidden>
+        </label>
+      </div>
+      <div id="fileInfo" class="file-info hidden">
+        <span id="fileName"></span>
+        <button id="clearFile" title="Clear">&times;</button>
+      </div>
+
+      <div class="text-input-divider">or type text</div>
+
+      <div class="text-input-area">
+        <textarea id="textInput" placeholder="Type text to engrave..."></textarea>
+        <div class="text-input-row">
+          <label>Font:</label>
+          <select id="fontSelect">
+            <optgroup label="Sans-Serif">
+              <option value="roboto" selected>Roboto</option>
+              <option value="open-sans">Open Sans</option>
+              <option value="oswald">Oswald</option>
+            </optgroup>
+            <optgroup label="Serif">
+              <option value="playfair-display">Playfair Display</option>
+              <option value="merriweather">Merriweather</option>
+              <option value="lora">Lora</option>
+              <option value="cinzel">Cinzel</option>
+            </optgroup>
+            <optgroup label="Script">
+              <option value="dancing-script">Dancing Script</option>
+              <option value="great-vibes">Great Vibes</option>
+              <option value="pacifico">Pacifico</option>
+            </optgroup>
+            <optgroup label="Monospace">
+              <option value="courier-prime">Courier Prime</option>
+              <option value="source-code-pro">Source Code Pro</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="text-input-row">
+          <label>Height:</label>
+          <div class="input-with-unit">
+            <input type="number" id="textHeight" value="2" min="0.25" max="24" step="0.25">
+            <span data-unit-label="length">in</span>
+          </div>
+          <button id="convertTextBtn" class="primary">Convert</button>
+        </div>
+      </div>
+
+      <div class="text-input-divider">or choose clipart</div>
+
+      <div class="clipart-area">
+        <select id="clipartSelect">
+          <option value="">— Select —</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- Material Settings -->
+    <section class="control-section">
+      <h2>Material</h2>
+      <div class="input-grid">
+        <label>Width:</label>
+        <div class="input-with-unit">
+          <input type="number" id="materialWidth" value="12" min="1" max="96" step="0.5">
+          <span data-unit-label="length">in</span>
+        </div>
+
+        <label>Height:</label>
+        <div class="input-with-unit">
+          <input type="number" id="materialHeight" value="12" min="1" max="96" step="0.5">
+          <span data-unit-label="length">in</span>
+        </div>
+
+        <label>Thickness:</label>
+        <div class="input-with-unit">
+          <input type="number" id="materialThickness" value="0.75" min="0.05" max="6" step="0.05">
+          <span data-unit-label="length">in</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- V-Bit Settings -->
+    <section class="control-section">
+      <h2>V-Bit</h2>
+      <div class="input-grid">
+        <label>Angle:</label>
+        <select id="vBitAngle">
+          <option value="30">30&deg;</option>
+          <option value="60">60&deg;</option>
+          <option value="90" selected>90&deg;</option>
+          <option value="120">120&deg;</option>
+          <option value="custom">Custom</option>
+        </select>
+
+        <label id="customAngleLabel" class="hidden">Degrees:</label>
+        <div id="customAngleWrap" class="input-with-unit hidden">
+          <input type="number" id="customAngle" value="90" min="10" max="170" step="1">
+          <span>&deg;</span>
+        </div>
+
+        <label>Max Depth:</label>
+        <div class="input-with-unit">
+          <input type="number" id="maxDepth" value="0.25" min="0.01" max="2" step="0.01">
+          <span data-unit-label="length">in</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Machine Settings -->
+    <section class="control-section">
+      <h2>Machine</h2>
+      <details class="advanced-settings" open>
+        <summary>Settings</summary>
+        <div class="input-grid">
+          <label>Feed Rate:</label>
+          <div class="input-with-unit">
+            <input type="number" id="feedRate" value="60" min="5" max="500" step="5">
+            <span data-unit-label="rate">in/min</span>
+          </div>
+
+          <label>Plunge Rate:</label>
+          <div class="input-with-unit">
+            <input type="number" id="plungeRate" value="20" min="5" max="100" step="5">
+            <span data-unit-label="rate">in/min</span>
+          </div>
+
+          <label>RPM:</label>
+          <div class="input-with-unit">
+            <input type="number" id="rpm" value="18000" min="1000" max="24000" step="1000">
+            <span></span>
+          </div>
+
+          <label>Safe Z:</label>
+          <div class="input-with-unit">
+            <input type="number" id="safeZ" value="0.25" min="0.1" max="2" step="0.05">
+            <span data-unit-label="length">in</span>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- Generate Section -->
+    <section class="control-section">
+      <h2>Toolpath</h2>
+      <div class="button-row">
+        <button id="generateBtn" class="primary" disabled>Generate Toolpath</button>
+      </div>
+      <div id="toolpathInfo" class="info-block hidden"></div>
+      <div class="button-row">
+        <button id="exportGcode" disabled>Export G-code</button>
+        <button id="exportSbp" disabled>Export SBP</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Main Canvas Area -->
+  <div id="canvasContainer">
+    <canvas id="threeCanvas"></canvas>
+    <div id="statusBar">
+      <span id="statusText">Ready — Import a vector file or type text to begin</span>
+    </div>
+  </div>
+
+  <!-- Loading Overlay -->
+  <div id="loadingOverlay" class="hidden">
+    <div class="spinner"></div>
+    <p id="loadingText">Loading...</p>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
