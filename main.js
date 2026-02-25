@@ -5,7 +5,7 @@ import { importSVG } from './modules/svg-import.js';
 import { importDXF } from './modules/dxf-import.js';
 import { loadDefaultFont, loadFontByName, textToPolygons, isFontReady } from './modules/text-to-paths.js';
 import { computeMedialAxis } from './modules/medial-axis.js';
-import { generateVEngraveToolpath, generatePocketPasses, calculateStats } from './modules/toolpath-gen.js';
+import { generateVEngraveToolpath, generatePocketPasses, generateProfilePass, calculateStats } from './modules/toolpath-gen.js';
 import { exportAsGcode, exportAsSbp } from './modules/export.js';
 import { CLIPART_CATALOG } from './modules/clipart.js';
 import { parseSVGString } from './modules/svg-import.js';
@@ -118,10 +118,20 @@ function setupEventListeners() {
     document.getElementById('customAngleWrap').classList.toggle('hidden', !isCustom);
   });
 
-  // Max depth checkbox toggle — also show/hide stepover
+  // Max depth checkbox toggle — also show/hide pocket clearing + stepover
   document.getElementById('limitDepth').addEventListener('change', (e) => {
     const on = e.target.checked;
     document.getElementById('maxDepth').disabled = !on;
+    document.getElementById('pocketLabel').classList.toggle('hidden', !on);
+    document.getElementById('pocketSpacer').classList.toggle('hidden', !on);
+    const pocketOn = on && document.getElementById('pocketClearing').checked;
+    document.getElementById('stepoverLabel').classList.toggle('hidden', !pocketOn);
+    document.getElementById('stepoverWrap').classList.toggle('hidden', !pocketOn);
+  });
+
+  // Pocket clearing checkbox — show/hide stepover
+  document.getElementById('pocketClearing').addEventListener('change', (e) => {
+    const on = e.target.checked;
     document.getElementById('stepoverLabel').classList.toggle('hidden', !on);
     document.getElementById('stepoverWrap').classList.toggle('hidden', !on);
   });
@@ -506,15 +516,32 @@ async function doGenerate() {
   try {
     centerOnMaterial();
 
+    // Log input state
+    console.group('=== doGenerate Input ===');
+    console.log('Polygons:', state.polygons.length);
+    for (let i = 0; i < state.polygons.length; i++) {
+      const p = state.polygons[i];
+      console.log(`  Polygon ${i}: outer=${p.outer.length} pts, holes=${p.holes.length}`);
+      if (p.outer.length <= 20) {
+        for (const pt of p.outer) console.log(`    (${pt.x.toFixed(4)}, ${pt.y.toFixed(4)})`);
+      } else {
+        for (let j = 0; j < 5; j++) console.log(`    (${p.outer[j].x.toFixed(4)}, ${p.outer[j].y.toFixed(4)})`);
+        console.log(`    ... (${p.outer.length - 5} more)`);
+      }
+    }
+    console.log('V-bit:', JSON.stringify(state.vBit));
+    console.log('Machine:', JSON.stringify(state.machine));
+    console.log('Material:', JSON.stringify(state.material));
+    console.groupEnd();
+
     setLoading(true, 'Computing medial axis...');
     await new Promise(r => setTimeout(r, 20));
 
-    // Step 1: Compute medial axis
+    // Step 1: Compute medial axis (uncapped — full natural depth exploration)
     const halfAngle = (state.vBit.includedAngle / 2) * Math.PI / 180;
-    const maxRadius = state.vBit.maxDepth * Math.tan(halfAngle);
+    const tanHA = Math.tan(halfAngle);
 
     state.medialAxis = computeMedialAxis(state.polygons, {
-      maxRadius,
       samplingDensity: 500,
     });
 
@@ -528,30 +555,77 @@ async function doGenerate() {
     await new Promise(r => setTimeout(r, 20));
 
     // Step 2: Generate toolpath
-    // When depth is limited: pocket raster first (roughing), then V-engrave (finish).
-    // The V-engrave pass uses the same inscribed-circle medial-axis approach with
-    // the radius capped at maxRadius — this naturally produces the correct wall
-    // profile around the pocket boundary.
+    // Check if the max depth actually constrains the natural V-carve.
+    // If the deepest natural cut is shallower than maxDepth, the limit
+    // never binds — just do normal V-engraving.
+    let depthLimitBinds = false;
     if (isFinite(state.vBit.maxDepth)) {
-      setLoading(true, 'Generating pocket passes...');
-      await new Promise(r => setTimeout(r, 20));
+      let maxNaturalRadius = 0;
+      for (const branch of state.medialAxis.branches) {
+        for (const pt of branch) {
+          if (pt.radius > maxNaturalRadius) maxNaturalRadius = pt.radius;
+        }
+      }
+      const maxNaturalDepth = maxNaturalRadius / tanHA;
+      depthLimitBinds = maxNaturalDepth > state.vBit.maxDepth;
+      console.log(`Max natural depth: ${maxNaturalDepth.toFixed(4)}, maxDepth: ${state.vBit.maxDepth}, limit binds: ${depthLimitBinds}`);
+    }
 
-      const stepover = fromDisplay(parseFloat(document.getElementById('stepover').value)) || 0.05;
-      const pocketMoves = generatePocketPasses(state.polygons, state.vBit, state.machine, stepover);
+    if (depthLimitBinds) {
+      const doPocket = document.getElementById('pocketClearing').checked;
 
-      setLoading(true, 'Generating V-engrave passes...');
-      await new Promise(r => setTimeout(r, 20));
+      if (doPocket) {
+        setLoading(true, 'Generating pocket passes...');
+        await new Promise(r => setTimeout(r, 20));
 
-      const vEngraveMoves = generateVEngraveToolpath(state.medialAxis, state.vBit, state.machine);
+        const stepover = fromDisplay(parseFloat(document.getElementById('stepover').value)) || 0.05;
+        const pocketMoves = generatePocketPasses(state.polygons, state.vBit, state.machine, stepover);
 
-      state.moves = [...pocketMoves, ...vEngraveMoves];
+        setLoading(true, 'Generating profile pass...');
+        await new Promise(r => setTimeout(r, 20));
+
+        const profileMoves = generateProfilePass(state.polygons, state.vBit, state.machine);
+
+        // Pocket clears the flat floor, profile traces the V-walls.
+        // No V-engrave (medial axis) pass needed — it would only add
+        // redundant stabbing motions through already-cleared areas.
+        state.moves = [...pocketMoves, ...profileMoves];
+      } else {
+        // Profile-only mode: just the inset contour at max depth
+        setLoading(true, 'Generating profile pass...');
+        await new Promise(r => setTimeout(r, 20));
+
+        const profileMoves = generateProfilePass(state.polygons, state.vBit, state.machine);
+        state.moves = profileMoves;
+      }
     } else {
       state.moves = generateVEngraveToolpath(state.medialAxis, state.vBit, state.machine);
     }
 
+    // Log the combined toolpath
+    console.group('=== Combined Toolpath ===');
+    console.log('Total moves:', state.moves.length);
+    let lastZ = null;
+    let zChanges = 0;
+    for (let i = 0; i < state.moves.length; i++) {
+      const m = state.moves[i];
+      if (m.type === 'comment') continue;
+      const mz = m.z ?? null;
+      if (mz !== null && mz !== lastZ) {
+        zChanges++;
+        if (zChanges <= 50) {
+          console.log(`  move ${i}: ${m.type} → z=${mz.toFixed(4)}${m.x != null ? ` (${m.x.toFixed(3)}, ${m.y.toFixed(3)})` : ''}`);
+        }
+        lastZ = mz;
+      }
+    }
+    if (zChanges > 50) console.log(`  ... (${zChanges - 50} more Z changes)`);
+    console.log('Total Z changes:', zChanges);
+    console.groupEnd();
+
     // Step 3: Update preview — use material bounds for the surface
     const matB = materialBounds();
-    showCarvedSurface(state.medialAxis, state.vBit, matB);
+    showCarvedSurface(state.medialAxis, state.vBit, matB, state.polygons);
     showToolpath(state.moves, matB);
     showVectorOverlay(state.polygons);
     showStock(state.material.width, state.material.height, state.material.thickness, true);

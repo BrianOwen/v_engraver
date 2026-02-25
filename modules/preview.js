@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { pointInPolygon, distanceToSegment } from './polygon-utils.js';
 
 let renderer, scene, camera, controls;
 let vectorGroup, toolpathGroup, surfaceGroup, stockGroup;
@@ -219,8 +220,14 @@ export function showToolpath(moves, bounds) {
  * Show carved surface as a heightmap mesh.
  * Computes V-groove depth at each grid point by checking distance
  * to medial axis LINE SEGMENTS (not just discrete points).
+ * When maxDepth is limited, also shows the flat pocket floor.
+ *
+ * @param {Object} medialAxis
+ * @param {Object} vBit
+ * @param {Object} bounds
+ * @param {Array} [polygons] - optional, needed for pocket visualization
  */
-export function showCarvedSurface(medialAxis, vBit, bounds) {
+export function showCarvedSurface(medialAxis, vBit, bounds, polygons) {
   clearGroup(surfaceGroup);
   // Clear the vector overlay (its ground plane obscures the surface)
   clearGroup(vectorGroup);
@@ -228,6 +235,8 @@ export function showCarvedSurface(medialAxis, vBit, bounds) {
   const halfAngle = (vBit.includedAngle / 2) * Math.PI / 180;
   const tanHA = Math.tan(halfAngle);
   let maxRadius = vBit.maxDepth * tanHA;
+  const depthLimited = isFinite(vBit.maxDepth);
+  const maxDepth = depthLimited ? vBit.maxDepth : Infinity;
 
   // If unlimited depth, derive maxRadius from actual medial axis data
   if (!isFinite(maxRadius)) {
@@ -263,7 +272,7 @@ export function showCarvedSurface(medialAxis, vBit, bounds) {
     }
   }
 
-  // Build spatial grid of segments for fast lookup
+  // Build spatial grid of medial axis segments for fast lookup
   const cellSize = Math.max(maxRadius * 2, dx * 4, 0.1);
   const segGrid = new Map();
   for (const seg of segments) {
@@ -286,6 +295,56 @@ export function showCarvedSurface(medialAxis, vBit, bounds) {
     }
   }
 
+  // When depth is limited, build a spatial grid of polygon boundary segments
+  // so we can quickly check distance-to-boundary for flat pocket areas.
+  let boundarySegGrid = null;
+  let boundaryCellSize = 0;
+  if (depthLimited && polygons && polygons.length > 0) {
+    const boundarySegs = [];
+    for (const polygon of polygons) {
+      const addRing = (ring) => {
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          boundarySegs.push({ ax: ring[j].x, ay: ring[j].y, bx: ring[i].x, by: ring[i].y });
+        }
+      };
+      addRing(polygon.outer);
+      for (const hole of polygon.holes) addRing(hole);
+    }
+    boundaryCellSize = Math.max(maxRadius * 1.5, 0.2);
+    boundarySegGrid = new Map();
+    for (const seg of boundarySegs) {
+      const sMinX = Math.min(seg.ax, seg.bx) - maxRadius;
+      const sMaxX = Math.max(seg.ax, seg.bx) + maxRadius;
+      const sMinY = Math.min(seg.ay, seg.by) - maxRadius;
+      const sMaxY = Math.max(seg.ay, seg.by) + maxRadius;
+      for (let cx = Math.floor(sMinX / boundaryCellSize); cx <= Math.floor(sMaxX / boundaryCellSize); cx++) {
+        for (let cy = Math.floor(sMinY / boundaryCellSize); cy <= Math.floor(sMaxY / boundaryCellSize); cy++) {
+          const key = `${cx},${cy}`;
+          if (!boundarySegGrid.has(key)) boundarySegGrid.set(key, []);
+          boundarySegGrid.get(key).push(seg);
+        }
+      }
+    }
+  }
+
+  function fastDistToBoundary(px, py) {
+    if (!boundarySegGrid) return 0;
+    const gcx = Math.floor(px / boundaryCellSize);
+    const gcy = Math.floor(py / boundaryCellSize);
+    let minDist = Infinity;
+    for (let ddx = -1; ddx <= 1; ddx++) {
+      for (let ddy = -1; ddy <= 1; ddy++) {
+        const cell = boundarySegGrid.get(`${gcx + ddx},${gcy + ddy}`);
+        if (!cell) continue;
+        for (const seg of cell) {
+          const d = distanceToSegment(px, py, seg.ax, seg.ay, seg.bx, seg.by);
+          if (d < minDist) minDist = d;
+        }
+      }
+    }
+    return minDist;
+  }
+
   // Pass 1: compute Z values
   const zValues = new Float32Array(cols * rows);
   let globalMinZ = 0;
@@ -298,19 +357,37 @@ export function showCarvedSurface(medialAxis, vBit, bounds) {
 
       let minZ = 0;
 
-      // Look up nearby segments
+      // V-groove depth from medial axis
       const gcx = Math.floor(px / cellSize);
       const gcy = Math.floor(py / cellSize);
       const cell = segGrid.get(`${gcx},${gcy}`);
 
       if (cell) {
         for (const seg of cell) {
-          // Find closest point on segment and interpolated radius
           const closest = closestOnSegment(px, py, seg);
           if (closest.dist < closest.radius) {
-            // V-groove profile: depth = -(radius - dist) / tan(halfAngle)
             const grooveZ = -(closest.radius - closest.dist) / tanHA;
             if (grooveZ < minZ) minZ = grooveZ;
+          }
+        }
+      }
+
+      // When depth is limited: the profile pass rolls a circle of radius
+      // maxRadius along the inside of the polygon boundary.  This produces:
+      //  - A V-profile wall from the boundary inward (z = -dist / tanHA)
+      //  - A flat pocket floor at z = -maxDepth where dist >= maxRadius
+      // Take the deepest of the medial-axis groove and the profile-wall cut.
+      if (depthLimited && polygons) {
+        // Clamp medial-axis groove depth to maxDepth
+        if (minZ < -maxDepth) minZ = -maxDepth;
+
+        for (const polygon of polygons) {
+          if (pointInPolygon(px, py, polygon)) {
+            const dist = fastDistToBoundary(px, py);
+            // Profile wall: V-bit at boundary distance carves a slope
+            const profileZ = -Math.min(dist, maxRadius) / tanHA;
+            if (profileZ < minZ) minZ = profileZ;
+            break;
           }
         }
       }
