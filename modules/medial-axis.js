@@ -119,8 +119,80 @@ function computePolygonMedialAxis(polygon, samplingDensity) {
     }
   }
 
+  // Step 5.5: Filter out edges where either endpoint is too close to the
+  // boundary.  Voronoi circumcenters within one sampling-spacing of the
+  // boundary are artefacts of adjacent sample points on converging edges,
+  // not true medial-axis vertices.  Removing them collapses the dense
+  // "ladder" mesh that forms near polygon vertices.
+  const minRadius = spacing;
+  const filteredEdges = edges.filter(edge => {
+    const r1 = vertexMap.get(vertexKey(edge.x1, edge.y1)).radius;
+    const r2 = vertexMap.get(vertexKey(edge.x2, edge.y2)).radius;
+    return r1 >= minRadius && r2 >= minRadius;
+  });
+
+  console.log(`[medial] edges before radius filter: ${edges.length}, after: ${filteredEdges.length}, minRadius: ${minRadius.toFixed(6)}`);
+
+  if (filteredEdges.length === 0) return [];
+
   // Step 6: Build adjacency graph and extract branches
-  return extractBranches(edges, vertexMap);
+  const rawBranches = extractBranches(filteredEdges, vertexMap);
+
+  // Step 7: Iteratively prune short leaf branches (sampling noise).
+  // Remove dead-end branches shorter than 1% of perimeter, then recalculate
+  // degrees — removing a leaf may expose a new leaf underneath. Repeat until
+  // stable. This peels away entire spurious sub-trees near polygon vertices
+  // without breaking main skeleton connectivity.
+  const minLen = totalPerimeter * 0.01;
+  let current = rawBranches.filter(b => b.length >= 2);
+  let changed = true;
+  let pass = 0;
+
+  console.log(`[prune] raw branches: ${rawBranches.length}, minLen: ${minLen.toFixed(4)}`);
+
+  while (changed) {
+    changed = false;
+    pass++;
+    const deg = new Map();
+    for (const branch of current) {
+      const sk = vertexKey(branch[0].x, branch[0].y);
+      const ek = vertexKey(branch[branch.length - 1].x, branch[branch.length - 1].y);
+      deg.set(sk, (deg.get(sk) || 0) + 1);
+      deg.set(ek, (deg.get(ek) || 0) + 1);
+    }
+    const next = [];
+    let removed = 0;
+    for (const branch of current) {
+      let len = 0;
+      for (let i = 1; i < branch.length; i++) {
+        len += Math.hypot(branch[i].x - branch[i - 1].x, branch[i].y - branch[i - 1].y);
+      }
+      if (len >= minLen) { next.push(branch); continue; }
+      const sk = vertexKey(branch[0].x, branch[0].y);
+      const ek = vertexKey(branch[branch.length - 1].x, branch[branch.length - 1].y);
+      if (deg.get(sk) === 1 || deg.get(ek) === 1) {
+        changed = true;
+        removed++;
+      } else {
+        next.push(branch);
+      }
+    }
+    if (removed > 0) console.log(`[prune] pass ${pass}: removed ${removed} leaves, remaining ${next.length}`);
+    current = next;
+  }
+
+  console.log(`[prune] final: ${current.length} branches`);
+  for (let i = 0; i < current.length; i++) {
+    const b = current[i];
+    let len = 0;
+    for (let j = 1; j < b.length; j++) {
+      len += Math.hypot(b[j].x - b[j - 1].x, b[j].y - b[j - 1].y);
+    }
+    const maxR = Math.max(...b.map(p => p.radius));
+    console.log(`  branch ${i}: len=${len.toFixed(4)} pts=${b.length} maxR=${maxR.toFixed(4)}`);
+  }
+
+  return current;
 }
 
 /**

@@ -1,7 +1,7 @@
 // Minimal DXF file parser for V-Engraver
 // Supports LINE, LWPOLYLINE, CIRCLE, ARC, POLYLINE/VERTEX entities.
 
-import { signedArea, computeBounds, pointInRing } from './polygon-utils.js';
+import { computeBounds, buildNestingTree } from './polygon-utils.js';
 
 /**
  * Import a DXF file and extract all closed paths as polygons.
@@ -179,7 +179,7 @@ function parseCircle(entity) {
   const r = parseFloat(map[40] || '0');
   if (r <= 0) return null;
 
-  const n = 72;
+  const n = 180;
   const points = [];
   for (let i = 0; i < n; i++) {
     const angle = (2 * Math.PI * i) / n;
@@ -267,49 +267,9 @@ function bulgeToArc(x1, y1, x2, y2, bulge) {
 }
 
 /**
- * Group polylines into polygon objects.
+ * Group polylines into polygon objects
+ * using containment-based even-odd nesting.
  */
 function groupPolygons(polylines) {
-  const classified = polylines.map(ring => {
-    const area = signedArea(ring);
-    return {
-      ring,
-      area,
-      absArea: Math.abs(area),
-      isOuter: area > 0,
-    };
-  });
-
-  const outerCount = classified.filter(c => c.isOuter).length;
-  if (outerCount === 0) {
-    classified.forEach(c => c.isOuter = !c.isOuter);
-  }
-
-  const outers = classified.filter(c => c.isOuter);
-  const holes = classified.filter(c => !c.isOuter);
-
-  const polygons = outers.map(o => ({ outer: o.ring, holes: [] }));
-
-  for (const hole of holes) {
-    const testPoint = hole.ring[0];
-    let bestOuter = null;
-    let bestArea = Infinity;
-
-    for (let i = 0; i < outers.length; i++) {
-      if (pointInRing(testPoint.x, testPoint.y, outers[i].ring)) {
-        if (outers[i].absArea < bestArea) {
-          bestArea = outers[i].absArea;
-          bestOuter = i;
-        }
-      }
-    }
-
-    if (bestOuter !== null) {
-      polygons[bestOuter].holes.push(hole.ring);
-    } else {
-      polygons.push({ outer: hole.ring, holes: [] });
-    }
-  }
-
-  return polygons;
+  return buildNestingTree(polylines);
 }

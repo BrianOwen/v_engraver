@@ -45,6 +45,16 @@ export const CLIPART_CATALOG = [
     </svg>`,
   },
   {
+    id: 'bullseye',
+    label: 'Bullseye',
+    category: 'Shapes',
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="48"/>
+      <circle cx="50" cy="50" r="32"/>
+      <circle cx="50" cy="50" r="16"/>
+    </svg>`,
+  },
+  {
     id: 'arrow-right',
     label: 'Arrow',
     category: 'Shapes',

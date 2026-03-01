@@ -1,6 +1,6 @@
 // SVG file import — parse SVG into polygon arrays using browser DOM
 
-import { signedArea, computeBounds, pointInRing } from './polygon-utils.js';
+import { computeBounds, buildNestingTree } from './polygon-utils.js';
 
 /**
  * Import an SVG file and extract all closed paths as polygons.
@@ -155,7 +155,7 @@ function sampleCircle(el) {
   const r = parseFloat(el.getAttribute('r'));
   if (!r) return null;
 
-  const n = 72;
+  const n = 180;
   const points = [];
   for (let i = 0; i < n; i++) {
     const angle = (2 * Math.PI * i) / n;
@@ -179,7 +179,7 @@ function sampleEllipse(el) {
   const ry = parseFloat(el.getAttribute('ry'));
   if (!rx || !ry) return null;
 
-  const n = 72;
+  const n = 180;
   const points = [];
   for (let i = 0; i < n; i++) {
     const angle = (2 * Math.PI * i) / n;
@@ -215,65 +215,9 @@ function samplePolyElement(el) {
 }
 
 /**
- * Group polylines into polygon objects { outer, holes }.
- * Uses signed area to determine winding direction,
- * and containment to assign holes to their parent outers.
+ * Group polylines into polygon objects { outer, holes }
+ * using containment-based even-odd nesting.
  */
 function groupPolygons(polylines) {
-  // Classify each ring as outer (positive area / CCW) or hole (negative / CW)
-  const classified = polylines.map(ring => {
-    const area = signedArea(ring);
-    return {
-      ring,
-      area,
-      isOuter: area > 0, // In SVG, Y axis is flipped, so we may need to flip this
-      bounds: computeBounds(ring),
-    };
-  });
-
-  // If all rings have the same sign, treat them all as outers (some SVGs are inconsistent)
-  const outerCount = classified.filter(c => c.isOuter).length;
-  if (outerCount === 0) {
-    // All CW — flip interpretation
-    classified.forEach(c => c.isOuter = true);
-  }
-
-  // SVG coordinate system has Y pointing down, so area sign interpretation
-  // may be inverted. Use absolute area to find the largest rings as outers.
-  // More robust: sort by absolute area descending, largest are outers.
-  const outers = classified.filter(c => c.isOuter);
-  const holes = classified.filter(c => !c.isOuter);
-
-  // If no holes, each outer is its own polygon
-  if (holes.length === 0) {
-    return outers.map(o => ({ outer: o.ring, holes: [] }));
-  }
-
-  // Assign each hole to the smallest outer that contains it
-  const polygons = outers.map(o => ({ outer: o.ring, holes: [] }));
-
-  for (const hole of holes) {
-    const testPoint = hole.ring[0];
-    let bestOuter = null;
-    let bestArea = Infinity;
-
-    for (let i = 0; i < outers.length; i++) {
-      if (pointInRing(testPoint.x, testPoint.y, outers[i].ring)) {
-        if (Math.abs(outers[i].area) < bestArea) {
-          bestArea = Math.abs(outers[i].area);
-          bestOuter = i;
-        }
-      }
-    }
-
-    if (bestOuter !== null) {
-      polygons[bestOuter].holes.push(hole.ring);
-    } else {
-      // Hole doesn't fit inside any outer — treat it as its own outer
-      // (this happens with some SVG exports)
-      polygons.push({ outer: hole.ring, holes: [] });
-    }
-  }
-
-  return polygons;
+  return buildNestingTree(polylines);
 }

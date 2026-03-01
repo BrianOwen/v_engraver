@@ -261,14 +261,48 @@ export function showCarvedSurface(medialAxis, vBit, bounds, polygons) {
   const dx = totalW / (cols - 1);
   const dy = totalH / (rows - 1);
 
-  // Collect all medial axis SEGMENTS (pairs of consecutive points)
+  // Collect all medial axis SEGMENTS (pairs of consecutive points).
+  // First, group branches into connected components and detect point-like
+  // clusters (e.g., circles/dots whose Voronoi skeleton is a starburst).
+  // Replace those with a single point source for smooth cone rendering.
   const segments = [];
-  for (const branch of medialAxis.branches) {
-    for (let i = 0; i < branch.length - 1; i++) {
-      segments.push({
-        ax: branch[i].x, ay: branch[i].y, ar: Math.min(branch[i].radius, maxRadius),
-        bx: branch[i + 1].x, by: branch[i + 1].y, br: Math.min(branch[i + 1].radius, maxRadius),
-      });
+  const branchComponents = groupBranchComponents(medialAxis.branches);
+
+  for (const comp of branchComponents) {
+    // Check if this component is point-like
+    let cMinX = Infinity, cMinY = Infinity, cMaxX = -Infinity, cMaxY = -Infinity;
+    let cMaxR = 0;
+    let deepest = null;
+    for (const bi of comp) {
+      for (const pt of medialAxis.branches[bi]) {
+        if (pt.x < cMinX) cMinX = pt.x;
+        if (pt.y < cMinY) cMinY = pt.y;
+        if (pt.x > cMaxX) cMaxX = pt.x;
+        if (pt.y > cMaxY) cMaxY = pt.y;
+        if (pt.radius > cMaxR) { cMaxR = pt.radius; deepest = pt; }
+      }
+    }
+    const extent = Math.max(cMaxX - cMinX, cMaxY - cMinY);
+    const isPointLike = deepest && comp.length >= 5 && cMaxR > extent * 0.49;
+    console.log(`Surface component: ${comp.length} branches, extent=${extent.toFixed(6)}, maxR=${cMaxR.toFixed(4)}, ratio=${(cMaxR / Math.max(extent, 1e-9)).toFixed(3)}, pointLike=${isPointLike}`);
+    if (isPointLike) {
+      // Point-like — single point source for a smooth cone
+      const r = Math.min(cMaxR, maxRadius);
+      console.log(`  → POINT SOURCE at (${deepest.x.toFixed(4)}, ${deepest.y.toFixed(4)}), r=${r.toFixed(4)}`);
+      segments.push({ ax: deepest.x, ay: deepest.y, ar: r,
+                       bx: deepest.x, by: deepest.y, br: r });
+      continue;
+    }
+
+    // Normal component — emit all segments
+    for (const bi of comp) {
+      const branch = medialAxis.branches[bi];
+      for (let i = 0; i < branch.length - 1; i++) {
+        segments.push({
+          ax: branch[i].x, ay: branch[i].y, ar: Math.min(branch[i].radius, maxRadius),
+          bx: branch[i + 1].x, by: branch[i + 1].y, br: Math.min(branch[i + 1].radius, maxRadius),
+        });
+      }
     }
   }
 
@@ -537,6 +571,53 @@ export function showStock(width, height, thickness, openTop = false) {
   const edgesGeom = new THREE.EdgesGeometry(boxGeom);
   const edgesMat = new THREE.LineBasicMaterial({ color: 0x665533, linewidth: 1 });
   stockGroup.add(new THREE.LineSegments(edgesGeom, edgesMat));
+}
+
+/**
+ * Group medial axis branches into connected components by endpoint proximity.
+ * Returns array of components, each an array of branch indices.
+ */
+function groupBranchComponents(branches) {
+  const TOL = 1e-4;
+  function ptKey(p) {
+    const gx = Math.round(p.x / TOL) * TOL;
+    const gy = Math.round(p.y / TOL) * TOL;
+    return `${gx.toFixed(6)},${gy.toFixed(6)}`;
+  }
+
+  const adj = new Map();
+  for (let i = 0; i < branches.length; i++) {
+    const b = branches[i];
+    if (b.length < 2) continue;
+    const sk = ptKey(b[0]);
+    const ek = ptKey(b[b.length - 1]);
+    if (!adj.has(sk)) adj.set(sk, []);
+    if (!adj.has(ek)) adj.set(ek, []);
+    adj.get(sk).push(i);
+    adj.get(ek).push(i);
+  }
+
+  const visited = new Set();
+  const components = [];
+  for (let i = 0; i < branches.length; i++) {
+    if (visited.has(i) || branches[i].length < 2) continue;
+    const comp = [];
+    const stack = [i];
+    while (stack.length > 0) {
+      const bi = stack.pop();
+      if (visited.has(bi)) continue;
+      visited.add(bi);
+      comp.push(bi);
+      const b = branches[bi];
+      for (const key of [ptKey(b[0]), ptKey(b[b.length - 1])]) {
+        for (const ni of (adj.get(key) || [])) {
+          if (!visited.has(ni)) stack.push(ni);
+        }
+      }
+    }
+    components.push(comp);
+  }
+  return components;
 }
 
 /**

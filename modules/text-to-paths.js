@@ -1,7 +1,7 @@
 // Text-to-paths conversion using opentype.js
 // Converts text strings into vector outlines for V-engraving.
 
-import { signedArea, computeBounds, pointInRing } from './polygon-utils.js';
+import { computeBounds, buildNestingTree } from './polygon-utils.js';
 
 let loadedFont = null;
 let fontLoading = false;
@@ -242,57 +242,9 @@ function subdivideBezierC(ring, cmd) {
 }
 
 /**
- * Group rings into polygons with outers and holes.
- * In opentype's Y-down screen space:
- *   CW (negative signed area) = outer boundary
- *   CCW (positive signed area) = hole
+ * Group rings into polygons with outers and holes
+ * using containment-based even-odd nesting.
  */
 function groupOutersAndHoles(rings) {
-  const classified = rings.map(ring => {
-    const area = signedArea(ring);
-    return {
-      ring,
-      area,
-      absArea: Math.abs(area),
-      // Outer contours have larger absolute area; use sign to distinguish
-      isOuter: area > 0,
-    };
-  });
-
-  // Sort by absolute area descending (largest first)
-  classified.sort((a, b) => b.absArea - a.absArea);
-
-  // If all have the same winding, treat the larger rings as outers
-  const outerCount = classified.filter(c => c.isOuter).length;
-  if (outerCount === 0) {
-    // All positive area — flip: largest are outers
-    classified.forEach(c => c.isOuter = !c.isOuter);
-  }
-
-  const outers = classified.filter(c => c.isOuter);
-  const holes = classified.filter(c => !c.isOuter);
-
-  const polygons = outers.map(o => ({ outer: o.ring, holes: [] }));
-
-  // Assign each hole to the smallest containing outer
-  for (const hole of holes) {
-    const testPoint = hole.ring[0];
-    let bestOuter = null;
-    let bestArea = Infinity;
-
-    for (let i = 0; i < outers.length; i++) {
-      if (pointInRing(testPoint.x, testPoint.y, outers[i].ring)) {
-        if (outers[i].absArea < bestArea) {
-          bestArea = outers[i].absArea;
-          bestOuter = i;
-        }
-      }
-    }
-
-    if (bestOuter !== null) {
-      polygons[bestOuter].holes.push(hole.ring);
-    }
-  }
-
-  return polygons;
+  return buildNestingTree(rings);
 }

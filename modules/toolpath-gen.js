@@ -114,6 +114,39 @@ export function generateVEngraveToolpath(medialAxis, vBit, machine) {
     const comp = remainingComponents[bestCI].comp;
     remainingComponents.splice(bestCI, 1);
 
+    // Check if this component is point-like (e.g., small circle or dot).
+    // The Voronoi skeleton of a circle produces a starburst of tiny branches
+    // all clustered at the center. Detect this and replace with a single plunge.
+    {
+      let compMaxR = 0;
+      let deepestPt = null;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const bi of comp) {
+        for (const pt of branches[bi]) {
+          if (pt.x < minX) minX = pt.x;
+          if (pt.y < minY) minY = pt.y;
+          if (pt.x > maxX) maxX = pt.x;
+          if (pt.y > maxY) maxY = pt.y;
+          if (pt.radius > compMaxR) {
+            compMaxR = pt.radius;
+            deepestPt = pt;
+          }
+        }
+      }
+      const extent = Math.max(maxX - minX, maxY - minY);
+      const isPointLike = deepestPt && comp.length >= 5 && compMaxR > extent * 0.49;
+      console.log(`Component: ${comp.length} branches, extent=${extent.toFixed(6)}, maxR=${compMaxR.toFixed(4)}, ratio=${(compMaxR / Math.max(extent, 1e-9)).toFixed(3)}, pointLike=${isPointLike}`);
+      if (isPointLike) {
+        // Point-like (circle/dot) — single plunge to the deepest point
+        console.log(`  → PLUNGE at (${deepestPt.x.toFixed(4)}, ${deepestPt.y.toFixed(4)}), r=${deepestPt.radius.toFixed(4)}`);
+        moves.push({ type: 'rapid', z: safeZ });
+        moves.push({ type: 'rapid', x: deepestPt.x, y: deepestPt.y });
+        emitPoint(deepestPt);
+        currentPos = { x: deepestPt.x, y: deepestPt.y };
+        continue;
+      }
+    }
+
     // DFS traversal of this component's branch graph.
     // Start from a leaf node (degree 1) if possible, otherwise any node.
     const compBranches = new Set(comp);

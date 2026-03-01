@@ -41,6 +41,106 @@ export function signedArea(ring) {
 }
 
 /**
+ * Build a nesting tree from closed rings and group them into polygons
+ * using the even-odd fill rule (containment-based, winding-independent).
+ *
+ * Each ring's nesting depth = how many other rings contain it.
+ * Even depth (0, 2, 4...) = outer (carved region).
+ * Odd depth  (1, 3, 5...) = hole (empty region, subtracted from parent).
+ *
+ * @param {Array<Array<{x:number, y:number}>>} rings
+ * @returns {Array<{outer: Array<{x,y}>, holes: Array<Array<{x,y}>>}>}
+ */
+export function buildNestingTree(rings) {
+  console.group('=== buildNestingTree ===');
+  console.log('Input rings:', rings.length);
+
+  if (rings.length === 0) { console.groupEnd(); return []; }
+  if (rings.length === 1) {
+    console.log('Single ring — returning as lone outer');
+    console.groupEnd();
+    return [{ outer: rings[0], holes: [] }];
+  }
+
+  // Compute metadata for each ring
+  const ringData = rings.map((ring, index) => ({
+    ring,
+    index,
+    area: Math.abs(signedArea(ring)),
+    depth: 0,
+    parentIndex: -1,
+  }));
+
+  for (let i = 0; i < ringData.length; i++) {
+    console.log(`  Ring ${i}: ${ringData[i].ring.length} pts, area=${ringData[i].area.toFixed(2)}`);
+  }
+
+  // Determine nesting depth: count how many other rings contain this ring
+  for (let i = 0; i < ringData.length; i++) {
+    const testPoint = ringData[i].ring[0];
+    let containCount = 0;
+    for (let j = 0; j < ringData.length; j++) {
+      if (i === j) continue;
+      if (pointInRing(testPoint.x, testPoint.y, ringData[j].ring)) {
+        containCount++;
+      }
+    }
+    ringData[i].depth = containCount;
+    console.log(`  Ring ${i}: depth=${containCount} (testPt: ${testPoint.x.toFixed(3)}, ${testPoint.y.toFixed(3)})`);
+  }
+
+  // Find each ring's parent: smallest-area containing ring at depth-1
+  for (let i = 0; i < ringData.length; i++) {
+    if (ringData[i].depth === 0) continue;
+    const testPoint = ringData[i].ring[0];
+    let bestParent = -1;
+    let bestParentArea = Infinity;
+    for (let j = 0; j < ringData.length; j++) {
+      if (i === j) continue;
+      if (ringData[j].depth !== ringData[i].depth - 1) continue;
+      if (!pointInRing(testPoint.x, testPoint.y, ringData[j].ring)) continue;
+      if (ringData[j].area < bestParentArea) {
+        bestParentArea = ringData[j].area;
+        bestParent = j;
+      }
+    }
+    ringData[i].parentIndex = bestParent;
+    console.log(`  Ring ${i}: parent=${bestParent}`);
+  }
+
+  // Build polygon groupings: even-depth rings are outers, odd-depth are holes
+  const polygons = [];
+  const outerIndexToPolyIndex = new Map();
+
+  for (let i = 0; i < ringData.length; i++) {
+    if (ringData[i].depth % 2 === 0) {
+      outerIndexToPolyIndex.set(i, polygons.length);
+      polygons.push({ outer: ringData[i].ring, holes: [] });
+      console.log(`  Ring ${i} → OUTER (polygon ${polygons.length - 1})`);
+    }
+  }
+
+  for (let i = 0; i < ringData.length; i++) {
+    if (ringData[i].depth % 2 !== 1) continue;
+    const parentIdx = ringData[i].parentIndex;
+    if (parentIdx !== -1 && outerIndexToPolyIndex.has(parentIdx)) {
+      const polyIdx = outerIndexToPolyIndex.get(parentIdx);
+      polygons[polyIdx].holes.push(ringData[i].ring);
+      console.log(`  Ring ${i} → HOLE of polygon ${polyIdx}`);
+    } else {
+      console.log(`  Ring ${i} → ORPHAN HOLE (parent=${parentIdx}), skipped`);
+    }
+  }
+
+  console.log('Result:', polygons.length, 'polygon(s)');
+  for (let i = 0; i < polygons.length; i++) {
+    console.log(`  Polygon ${i}: outer=${polygons[i].outer.length} pts, holes=${polygons[i].holes.length}`);
+  }
+  console.groupEnd();
+  return polygons;
+}
+
+/**
  * Bounding box of a set of points.
  */
 export function computeBounds(points) {
