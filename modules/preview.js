@@ -8,6 +8,28 @@ import { pointInPolygon, distanceToSegment } from './polygon-utils.js';
 let renderer, scene, camera, controls;
 let vectorGroup, toolpathGroup, surfaceGroup, stockGroup;
 
+// ── Read theme tokens from CSS ──────────────────────────────
+function getThemeColors() {
+  const css = getComputedStyle(document.body);
+  const read = (prop, fallback) => css.getPropertyValue(prop).trim() || fallback;
+  const themed = read('--t-mesh-style', '') === 'themed';
+  return {
+    canvasBg:        read('--t-canvas-bg', '#f0f0f0'),
+    border:          read('--t-border', '#d2d2d7'),
+    accent:          read('--t-accent', '#e04080'),
+    textDim:         read('--t-text-dim', '#6e6e73'),
+    bgTertiary:      read('--t-bg-tertiary', '#e8e8ed'),
+    themed,
+    meshDefault:     read('--t-mesh-default', '#cccccc'),
+    meshOpacity:     parseFloat(read('--t-mesh-opacity', '1')),
+    meshEmissive:    read('--t-mesh-emissive', '#000000'),
+    meshEmissiveInt: parseFloat(read('--t-mesh-emissive-intensity', '0')),
+    meshEdgeColor:   read('--t-mesh-edge-color', '#665533'),
+    meshEdgeOpacity: parseFloat(read('--t-mesh-edge-opacity', '1')),
+    meshBoard:       read('--t-mesh-board', ''),
+  };
+}
+
 /**
  * Initialize the Three.js scene.
  */
@@ -20,7 +42,8 @@ export function initThreeScene() {
   renderer.setSize(container.clientWidth, container.clientHeight);
 
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xf0f0f0);
+  const canvasBg = getComputedStyle(document.body).getPropertyValue('--t-canvas-bg').trim();
+  scene.background = new THREE.Color(canvasBg || '#f0f0f0');
 
   const aspect = container.clientWidth / container.clientHeight;
   camera = new THREE.PerspectiveCamera(45, aspect, 0.001, 1000);
@@ -101,8 +124,9 @@ export function showVectors(polygons, bounds) {
   clearGroup(toolpathGroup);
   clearGroup(surfaceGroup);
 
-  const material = new THREE.LineBasicMaterial({ color: 0x2080ff, linewidth: 1 });
-  const holeMaterial = new THREE.LineBasicMaterial({ color: 0x60a0ff, linewidth: 1 });
+  const tc = getThemeColors();
+  const material = new THREE.LineBasicMaterial({ color: tc.accent });
+  const holeMaterial = new THREE.LineBasicMaterial({ color: tc.accent, transparent: true, opacity: 0.6 });
 
   for (const polygon of polygons) {
     addRingLine(vectorGroup, polygon.outer, material);
@@ -136,7 +160,8 @@ function addGrid(bounds) {
   else if (maxDim > 5) gridStep = 1;
   else gridStep = 0.5;
 
-  const gridMat = new THREE.LineBasicMaterial({ color: 0xcccccc, transparent: true, opacity: 0.4 });
+  const tc = getThemeColors();
+  const gridMat = new THREE.LineBasicMaterial({ color: tc.border, transparent: true, opacity: 0.4 });
   const gridLines = [];
   const startX = Math.floor(gridMin.x / gridStep) * gridStep;
   const startY = Math.floor(gridMin.y / gridStep) * gridStep;
@@ -159,6 +184,9 @@ function addGrid(bounds) {
  */
 export function showToolpath(moves, bounds) {
   clearGroup(toolpathGroup);
+
+  const tc = getThemeColors();
+  const baseColor = new THREE.Color(tc.themed ? tc.meshDefault : tc.accent);
 
   const cutPositions = [];
   const cutColors = [];
@@ -190,11 +218,11 @@ export function showToolpath(moves, bounds) {
       cutPositions.push(lastPos.x, lastPos.y, lastPos.z);
       cutPositions.push(x, y, z);
 
+      // Depth-shade: bright at surface, dimmer deep
       const depthRatio = minZ !== 0 ? z / minZ : 0;
-      const r = 1.0;
-      const g = 0.5 * (1 - depthRatio);
-      const b = 0.1 * (1 - depthRatio);
-      cutColors.push(r, g, b, r, g, b);
+      const fade = 1 - depthRatio * 0.5;
+      cutColors.push(baseColor.r * fade, baseColor.g * fade, baseColor.b * fade);
+      cutColors.push(baseColor.r * fade, baseColor.g * fade, baseColor.b * fade);
     }
 
     lastPos = { x, y, z };
@@ -211,7 +239,7 @@ export function showToolpath(moves, bounds) {
   if (rapidPositions.length > 0) {
     const rapidGeom = new THREE.BufferGeometry();
     rapidGeom.setAttribute('position', new THREE.Float32BufferAttribute(rapidPositions, 3));
-    const rapidMat = new THREE.LineBasicMaterial({ color: 0x40c040, transparent: true, opacity: 0.4, depthTest: false });
+    const rapidMat = new THREE.LineBasicMaterial({ color: tc.textDim, transparent: true, opacity: 0.35, depthTest: false });
     toolpathGroup.add(new THREE.LineSegments(rapidGeom, rapidMat));
   }
 }
@@ -432,6 +460,10 @@ export function showCarvedSurface(medialAxis, vBit, bounds, polygons) {
   }
 
   // Build geometry
+  const tc = getThemeColors();
+  const surfaceColor = new THREE.Color(tc.themed ? tc.meshDefault : '#d4a860');
+  const surfaceR = surfaceColor.r, surfaceG = surfaceColor.g, surfaceB = surfaceColor.b;
+
   const geometry = new THREE.PlaneGeometry(totalW, totalH, cols - 1, rows - 1);
   const positions = geometry.attributes.position;
   const colors = new Float32Array(positions.count * 3);
@@ -447,11 +479,11 @@ export function showCarvedSurface(medialAxis, vBit, bounds, polygons) {
       positions.setY(idx, py);
       positions.setZ(idx, z);
 
-      // Color: light wood surface, darker in grooves
+      // Color: surface color, darker in grooves
       const depthFrac = globalMinZ !== 0 ? Math.max(0, Math.min(1, z / globalMinZ)) : 0;
-      colors[idx * 3]     = 0.93 - 0.65 * depthFrac;
-      colors[idx * 3 + 1] = 0.85 - 0.70 * depthFrac;
-      colors[idx * 3 + 2] = 0.65 - 0.60 * depthFrac;
+      colors[idx * 3]     = surfaceR * (1 - depthFrac * 0.7);
+      colors[idx * 3 + 1] = surfaceG * (1 - depthFrac * 0.8);
+      colors[idx * 3 + 2] = surfaceB * (1 - depthFrac * 0.85);
     }
   }
 
@@ -464,6 +496,8 @@ export function showCarvedSurface(medialAxis, vBit, bounds, polygons) {
     side: THREE.DoubleSide,
     flatShading: false,
     shininess: 40,
+    emissive: new THREE.Color(tc.themed ? tc.meshEmissive : '#000000'),
+    emissiveIntensity: tc.meshEmissiveInt,
   });
 
   const mesh = new THREE.Mesh(geometry, material);
@@ -501,8 +535,9 @@ function closestOnSegment(px, py, seg) {
  * Show vector outlines as thin lines overlaid on the surface.
  */
 export function showVectorOverlay(polygons) {
+  const tc = getThemeColors();
   const material = new THREE.LineBasicMaterial({
-    color: 0x2060cc,
+    color: new THREE.Color(tc.accent),
     transparent: true,
     opacity: 0.6,
     depthTest: false,
@@ -545,21 +580,25 @@ function fitCamera(bounds) {
 export function showStock(width, height, thickness, openTop = false) {
   clearGroup(stockGroup);
 
+  const tc = getThemeColors();
+  const boardColor = (tc.themed && tc.meshBoard && tc.meshBoard !== 'transparent')
+    ? tc.meshBoard : '#d4a860';
+
   const boxGeom = new THREE.BoxGeometry(width, height, thickness);
   boxGeom.translate(width / 2, height / 2, -thickness / 2);
 
-  // Light wood material
   const sideMat = new THREE.MeshPhongMaterial({
-    color: 0xd4a860,
+    color: new THREE.Color(boardColor),
     transparent: true,
-    opacity: 0.55,
+    opacity: tc.themed ? tc.meshOpacity * 0.6 : 0.55,
     side: THREE.DoubleSide,
     shininess: 20,
+    emissive: new THREE.Color(tc.themed ? tc.meshEmissive : '#000000'),
+    emissiveIntensity: tc.meshEmissiveInt * 0.3,
   });
 
   let mesh;
   if (openTop) {
-    // BoxGeometry groups: 0=+x, 1=-x, 2=+y, 3=-y, 4=+z(top), 5=-z(bottom)
     const hiddenMat = new THREE.MeshBasicMaterial({ visible: false });
     mesh = new THREE.Mesh(boxGeom, [sideMat, sideMat, sideMat, sideMat, hiddenMat, sideMat]);
   } else {
@@ -567,9 +606,12 @@ export function showStock(width, height, thickness, openTop = false) {
   }
   stockGroup.add(mesh);
 
-  // Dark edges
   const edgesGeom = new THREE.EdgesGeometry(boxGeom);
-  const edgesMat = new THREE.LineBasicMaterial({ color: 0x665533, linewidth: 1 });
+  const edgesMat = new THREE.LineBasicMaterial({
+    color: new THREE.Color(tc.themed ? tc.meshEdgeColor : '#665533'),
+    opacity: tc.meshEdgeOpacity,
+    transparent: tc.meshEdgeOpacity < 1,
+  });
   stockGroup.add(new THREE.LineSegments(edgesGeom, edgesMat));
 }
 
@@ -621,10 +663,58 @@ function groupBranchComponents(branches) {
 }
 
 /**
- * Update scene background for theme.
+ * Re-read CSS theme tokens and update scene colors.
+ * Restyles background plus all existing stock/surface/vector/toolpath objects.
  */
-export function setTheme(isDark) {
-  if (scene) {
-    scene.background = new THREE.Color(isDark ? 0x1d1d1f : 0xf0f0f0);
-  }
+export function syncThemeColors() {
+  if (!scene) return;
+  const tc = getThemeColors();
+  scene.background = new THREE.Color(tc.canvasBg);
+
+  // Restyle stock box
+  stockGroup.traverse(obj => {
+    if (obj.isMesh && obj.material && obj.material.isMeshPhongMaterial) {
+      const boardColor = (tc.themed && tc.meshBoard && tc.meshBoard !== 'transparent')
+        ? tc.meshBoard : '#d4a860';
+      obj.material.color.set(boardColor);
+      obj.material.opacity = tc.themed ? tc.meshOpacity * 0.6 : 0.55;
+      obj.material.emissive.set(tc.themed ? tc.meshEmissive : '#000000');
+      obj.material.emissiveIntensity = tc.meshEmissiveInt * 0.3;
+      obj.material.needsUpdate = true;
+    }
+    if (obj.isLineSegments && obj.material) {
+      obj.material.color.set(tc.themed ? tc.meshEdgeColor : '#665533');
+      obj.material.opacity = tc.meshEdgeOpacity;
+      obj.material.transparent = tc.meshEdgeOpacity < 1;
+      obj.material.needsUpdate = true;
+    }
+  });
+
+  // Restyle carved surface
+  surfaceGroup.traverse(obj => {
+    if (obj.isMesh && obj.material && obj.material.isMeshPhongMaterial) {
+      obj.material.emissive.set(tc.themed ? tc.meshEmissive : '#000000');
+      obj.material.emissiveIntensity = tc.meshEmissiveInt;
+      obj.material.needsUpdate = true;
+      // Vertex colors need rebuild — defer to next generate
+    }
+    // Vector overlay lines
+    if (obj.isLine && obj.material) {
+      obj.material.color.set(tc.accent);
+      obj.material.needsUpdate = true;
+    }
+  });
+
+  // Restyle vector outlines
+  vectorGroup.traverse(obj => {
+    if (obj.isLine && obj.material && !obj.isLineSegments) {
+      obj.material.color.set(tc.accent);
+      obj.material.needsUpdate = true;
+    }
+    // Grid lines
+    if (obj.isLineSegments && obj.material) {
+      obj.material.color.set(tc.border);
+      obj.material.needsUpdate = true;
+    }
+  });
 }

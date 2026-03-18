@@ -9,7 +9,7 @@ import { generateVEngraveToolpath, generatePocketPasses, generateProfilePass, ca
 import { exportAsGcode, exportAsSbp } from './modules/export.js';
 import { CLIPART_CATALOG } from './modules/clipart.js';
 import { parseSVGString } from './modules/svg-import.js';
-import { initThreeScene, clearScene, showVectors, showToolpath, showCarvedSurface, setTheme, showVectorOverlay, showStock } from './modules/preview.js';
+import { initThreeScene, clearScene, showVectors, showToolpath, showCarvedSurface, syncThemeColors, showVectorOverlay, showStock } from './modules/preview.js';
 
 // Unit conversion helpers
 const MM_PER_INCH = 25.4;
@@ -75,12 +75,9 @@ function setupEventListeners() {
     });
   });
 
-  // Theme toggle
-  document.getElementById('themeToggle').addEventListener('click', () => {
-    const isDark = document.body.classList.toggle('dark-mode');
-    document.body.classList.toggle('light-mode', !isDark);
-    setTheme(isDark);
-  });
+  // Sync Three.js scene on theme change
+  new MutationObserver(() => syncThemeColors())
+    .observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   // File import — drag/drop
   const dropZone = document.getElementById('dropZone');
