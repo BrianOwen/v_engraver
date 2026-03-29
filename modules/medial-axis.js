@@ -120,18 +120,18 @@ function computePolygonMedialAxis(polygon, samplingDensity) {
   }
 
   // Step 5.5: Filter out edges where either endpoint is too close to the
-  // boundary.  Voronoi circumcenters within one sampling-spacing of the
-  // boundary are artefacts of adjacent sample points on converging edges,
+  // boundary.  Voronoi circumcenters within a fraction of the sampling
+  // spacing are artefacts of adjacent sample points on converging edges,
   // not true medial-axis vertices.  Removing them collapses the dense
   // "ladder" mesh that forms near polygon vertices.
-  const minRadius = spacing;
+  // Use a small fraction of spacing so thin script strokes (where the
+  // medial axis legitimately has tiny radius) are preserved.
+  const minRadius = spacing * 0.1;
   const filteredEdges = edges.filter(edge => {
     const r1 = vertexMap.get(vertexKey(edge.x1, edge.y1)).radius;
     const r2 = vertexMap.get(vertexKey(edge.x2, edge.y2)).radius;
     return r1 >= minRadius && r2 >= minRadius;
   });
-
-  console.log(`[medial] edges before radius filter: ${edges.length}, after: ${filteredEdges.length}, minRadius: ${minRadius.toFixed(6)}`);
 
   if (filteredEdges.length === 0) return [];
 
@@ -148,8 +148,6 @@ function computePolygonMedialAxis(polygon, samplingDensity) {
   let changed = true;
   let pass = 0;
 
-  console.log(`[prune] raw branches: ${rawBranches.length}, minLen: ${minLen.toFixed(4)}`);
-
   while (changed) {
     changed = false;
     pass++;
@@ -161,7 +159,6 @@ function computePolygonMedialAxis(polygon, samplingDensity) {
       deg.set(ek, (deg.get(ek) || 0) + 1);
     }
     const next = [];
-    let removed = 0;
     for (const branch of current) {
       let len = 0;
       for (let i = 1; i < branch.length; i++) {
@@ -172,25 +169,18 @@ function computePolygonMedialAxis(polygon, samplingDensity) {
       const ek = vertexKey(branch[branch.length - 1].x, branch[branch.length - 1].y);
       if (deg.get(sk) === 1 || deg.get(ek) === 1) {
         changed = true;
-        removed++;
       } else {
         next.push(branch);
       }
     }
-    if (removed > 0) console.log(`[prune] pass ${pass}: removed ${removed} leaves, remaining ${next.length}`);
     current = next;
   }
 
-  console.log(`[prune] final: ${current.length} branches`);
-  for (let i = 0; i < current.length; i++) {
-    const b = current[i];
-    let len = 0;
-    for (let j = 1; j < b.length; j++) {
-      len += Math.hypot(b[j].x - b[j - 1].x, b[j].y - b[j - 1].y);
-    }
-    const maxR = Math.max(...b.map(p => p.radius));
-    console.log(`  branch ${i}: len=${len.toFixed(4)} pts=${b.length} maxR=${maxR.toFixed(4)}`);
-  }
+  // Step 8: Smooth branches to remove Voronoi zigzag noise.
+  // Apply 3-point moving average to interior points (preserves endpoints
+  // so junction connectivity isn't broken). Radius is smoothed too so
+  // the V-bit depth follows the smoothed centerline.
+  current = current.map(branch => smoothBranch(branch, 2));
 
   return current;
 }
@@ -309,6 +299,31 @@ function lerpPoint(a, b, t, radius) {
     y: a.y + (b.y - a.y) * t,
     radius: radius,
   };
+}
+
+/**
+ * Smooth a branch by repeated 3-point averaging of interior points.
+ * Endpoints are preserved to maintain junction connectivity.
+ * @param {Array} branch - [{x, y, radius}, ...]
+ * @param {number} passes - number of smoothing passes
+ */
+function smoothBranch(branch, passes) {
+  if (branch.length <= 2) return branch;
+
+  let pts = branch;
+  for (let p = 0; p < passes; p++) {
+    const smoothed = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+      smoothed.push({
+        x: (pts[i - 1].x + pts[i].x + pts[i + 1].x) / 3,
+        y: (pts[i - 1].y + pts[i].y + pts[i + 1].y) / 3,
+        radius: (pts[i - 1].radius + pts[i].radius + pts[i + 1].radius) / 3,
+      });
+    }
+    smoothed.push(pts[pts.length - 1]);
+    pts = smoothed;
+  }
+  return pts;
 }
 
 function vertexKey(x, y) {

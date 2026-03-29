@@ -6,7 +6,7 @@ import { importDXF } from './modules/dxf-import.js';
 import { loadDefaultFont, loadFontByName, textToPolygons, isFontReady } from './modules/text-to-paths.js';
 import { computeMedialAxis } from './modules/medial-axis.js';
 import { generateVEngraveToolpath, generatePocketPasses, generateProfilePass, calculateStats } from './modules/toolpath-gen.js';
-import { exportAsGcode, exportAsSbp } from './modules/export.js';
+import { exportAsGcode, exportAsSbp, generateSbp, generateGcode } from './modules/export.js';
 import { CLIPART_CATALOG } from './modules/clipart.js';
 import { parseSVGString } from './modules/svg-import.js';
 import { initThreeScene, clearScene, showVectors, showToolpath, showCarvedSurface, syncThemeColors, showVectorOverlay, showStock } from './modules/preview.js';
@@ -18,6 +18,19 @@ function fromDisplay(val) { return state.units === 'mm' ? val / MM_PER_INCH : va
 function unitSuffix() { return state.units === 'mm' ? 'mm' : 'in'; }
 function rateSuffix() { return state.units === 'mm' ? 'mm/min' : 'in/min'; }
 
+function getExportOptions() {
+  readInputs();
+  return {
+    feedRate: state.machine.feedRate,
+    plungeRate: state.machine.plungeRate,
+    rpm: state.machine.rpm,
+    safeZ: state.machine.safeZ,
+    fileName: state.fileName || 'v-engrave',
+    vBitAngle: state.vBit.includedAngle,
+    units: state.units,
+  };
+}
+
 function init() {
   initThreeScene();
   setupEventListeners();
@@ -27,6 +40,15 @@ function init() {
   readMaterial();
   showVectors([], materialBounds());
   showStock(state.material.width, state.material.height, state.material.thickness);
+
+  // FabMo integration
+  if (window.FabMoBridge) {
+    window._fabmoBridge = FabMoBridge.initFabMoUI({
+      appId: 'v_engraver',
+      onSubmitSbp: () => state.moves.length ? generateSbp(state.moves, getExportOptions()) : null,
+      onSubmitGcode: () => state.moves.length ? generateGcode(state.moves, getExportOptions()) : null,
+    });
+  }
 }
 
 function setupEventListeners() {
@@ -647,6 +669,7 @@ async function doGenerate() {
     // Enable export buttons
     document.getElementById('exportGcode').disabled = false;
     document.getElementById('exportSbp').disabled = false;
+    if (window._fabmoBridge) window._fabmoBridge.enableSubmit();
 
     const statusMsg = `Toolpath generated: ${stats.moveCount} moves, ${stats.cutLength} ${unitSuffix()} cut length`;
     if (exceedsMaterial) {

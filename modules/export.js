@@ -3,6 +3,12 @@
 import { movesToSbp, movesToGcode } from './toolpaths.js';
 
 function downloadFile(content, filename, mimeType = 'text/plain') {
+    // FabMo: submit to tool instead of downloading
+    if (window.FabMoBridge && window.FabMoBridge.isFabMo) {
+        window.FabMoBridge.submitJob(content, filename,
+            filename.endsWith('.sbp') ? 'sbp' : 'gcode');
+        return;
+    }
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -14,7 +20,7 @@ function downloadFile(content, filename, mimeType = 'text/plain') {
   URL.revokeObjectURL(url);
 }
 
-export function exportAsGcode(moves, options) {
+export function generateGcode(moves, options) {
   const { feedRate, plungeRate, rpm, safeZ, fileName, vBitAngle, units } = options;
   const lines = [];
   const unitCode = units === 'mm' ? 'G21' : 'G20';
@@ -38,11 +44,13 @@ export function exportAsGcode(moves, options) {
   lines.push('G0 X0 Y0');
   lines.push('M30');
 
-  const baseName = (fileName || 'v-engrave').replace(/\.[^.]+$/, '');
-  downloadFile(lines.join('\n'), `${baseName}.nc`);
+  return {
+    content: lines.join('\n'),
+    filename: ((fileName || 'v-engrave').replace(/\.[^.]+$/, '')) + '.nc',
+  };
 }
 
-export function exportAsSbp(moves, options) {
+export function generateSbp(moves, options) {
   const { feedRate, plungeRate, rpm, safeZ, fileName, vBitAngle } = options;
   const feedIPS = feedRate / 60;
   const plungeIPS = plungeRate / 60;
@@ -68,6 +76,18 @@ export function exportAsSbp(moves, options) {
   lines.push('J2,0,0');
   lines.push('END');
 
-  const baseName = (fileName || 'v-engrave').replace(/\.[^.]+$/, '');
-  downloadFile(lines.join('\n'), `${baseName}.sbp`);
+  return {
+    content: lines.join('\n'),
+    filename: ((fileName || 'v-engrave').replace(/\.[^.]+$/, '')) + '.sbp',
+  };
+}
+
+export function exportAsGcode(moves, options) {
+  const { content, filename } = generateGcode(moves, options);
+  downloadFile(content, filename);
+}
+
+export function exportAsSbp(moves, options) {
+  const { content, filename } = generateSbp(moves, options);
+  downloadFile(content, filename);
 }
