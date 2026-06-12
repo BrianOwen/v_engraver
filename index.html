@@ -32,7 +32,7 @@
       <div class="sb-brand">
         <a href="/"><img src="../ui_testbed/SBLogo Crop.png" alt="ShopBot Labs" class="sidebar-logo sb-brand-logo"></a>
         <span class="sb-brand-name">V-Engraver</span>
-        <span class="app-version">v1.7</span>
+        <span class="app-version">v1.8</span>
       </div>
       <div class="header-controls">
         <div class="unit-toggle sb-toggle">
@@ -41,6 +41,8 @@
         </div>
       </div>
     </div>
+
+    <div class="sidebar-body sb-panel">
 
     <!-- Import Section -->
     <section class="control-section sb-section">
@@ -149,16 +151,16 @@
           <span>&deg;</span>
         </div>
 
-        <label class="checkbox-label">
-          <input type="checkbox" id="limitDepth"> Max Depth:
+        <label class="checkbox-label sb-checkbox">
+          <input type="checkbox" id="limitDepth"> <span>Max Depth:</span>
         </label>
         <div class="input-with-unit">
           <input type="number" id="maxDepth" value="0.25" min="0.01" max="2" step="0.01" disabled>
           <span data-unit-label="length">in</span>
         </div>
 
-        <label id="pocketLabel" class="checkbox-label hidden">
-          <input type="checkbox" id="pocketClearing" checked> Pocket Clearing
+        <label id="pocketLabel" class="checkbox-label sb-checkbox hidden">
+          <input type="checkbox" id="pocketClearing" checked> <span>Pocket Clearing</span>
         </label>
         <div id="pocketSpacer" class="hidden"></div>
 
@@ -215,6 +217,7 @@
         <button id="exportSbp" class="sb-btn-output" disabled>Export SBP</button>
       </div>
     </section>
+    </div>
   </div>
 
   <!-- Main Canvas Area -->
